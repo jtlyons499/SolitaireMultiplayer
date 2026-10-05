@@ -2,7 +2,11 @@
 import random
 import re
 
-from career_npc_development import stable_seed
+import hashlib
+
+def stable_seed(*parts):
+    digest=hashlib.sha256('|'.join(map(str,parts)).encode('utf-8')).digest()
+    return int.from_bytes(digest[:8],'big')
 
 AVATAR_VERSION = 1
 AVATAR_VARIANTS = 10
@@ -78,3 +82,4 @@ def get_avatar_choices(npc):
     """Pure read for renderers; save migration happens in the Career world."""
     source = dict(npc)
     return ensure_prospect_avatar(source)
+
