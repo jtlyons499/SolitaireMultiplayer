@@ -950,7 +950,7 @@ class TexasHoldemGame:
 
         self.refresh_busted_state()
 
-        if self.player_busted:
+        if self.player_busted and not getattr(self,"allow_network_spectator",False):
             self.hand_complete = True
             self.current_actor = -1
             self.current_stage = "busted"
@@ -1111,9 +1111,8 @@ class TexasHoldemGame:
 
         for _ in range(2):
 
-            self.player_hand.append(
-                self.draw_card()
-            )
+            if not self.player_busted:
+                self.player_hand.append(self.draw_card())
 
             for npc_index in range(
                     len(self.npcs)
@@ -4823,3 +4822,4 @@ class TexasHoldemGame:
         return HAND_NAMES[
             result[0][0]
         ]
+
