@@ -4,6 +4,9 @@ from pathlib import Path
 import pygame
 from standalone_table import StandaloneTable
 from lan_session import OnlineTable
+from room_session import RoomTable
+from room_view import RoomView
+import connection_settings
 from standalone_view import TableView
 import texas_holdem_ui as ui
 from poker_recap import handle_recap_action
@@ -15,7 +18,7 @@ def main():
     pygame.init();screen=pygame.display.set_mode((1366,768),pygame.RESIZABLE)
     pygame.display.set_caption('Solitaire+ Poker Table — Multiplayer')
     canvas=pygame.Surface((1366,768));clock=pygame.time.Clock();font=pygame.font.Font(None,36)
-    view=TableView(canvas);name='';address='127.0.0.1';room_code='';relay_address='127.0.0.1:50008';focus='name';table=None;running=True;pygame.key.start_text_input()
+    view=TableView(canvas);room_view=RoomView(canvas,view);saved=connection_settings.load();name=saved.get('name','');address='127.0.0.1';room_code='';relay_address=saved.get('relay_address') or 'tcp://yamanote.proxy.rlwy.net:40274';focus='name';table=None;running=True;pygame.key.start_text_input()
     sounds={}
     if pygame.mixer.get_init():
         for folder in ('assets/sounds','assets/sfx'):
@@ -26,7 +29,7 @@ def main():
         if key in sounds:sounds[key].play()
     name_rect=pygame.Rect(423,290,520,52);start_rect=pygame.Rect(183,460,300,60)
     host_rect=pygame.Rect(533,460,300,60);join_rect=pygame.Rect(883,460,300,60)
-    address_rect=pygame.Rect(423,380,520,52);leave_rect=pygame.Rect(550,20,220,40);ready_rect=pygame.Rect(800,20,280,40)
+    address_rect=pygame.Rect(423,380,520,52);leave_rect=pygame.Rect(1130,15,210,40);ready_rect=pygame.Rect(800,20,280,40)
     relay_rect=pygame.Rect(183,590,520,48);code_rect=pygame.Rect(723,590,460,48)
     create_rect=pygame.Rect(363,660,300,55);room_join_rect=pygame.Rect(703,660,300,55)
     while running:
@@ -50,18 +53,24 @@ def main():
                     elif address_rect.collidepoint(mouse):focus='address'
                     elif relay_rect.collidepoint(mouse):focus='relay'
                     elif code_rect.collidepoint(mouse):focus='code'
-                    elif create_rect.collidepoint(mouse):table=OnlineTable(name,True,relay_address,relay=True)
-                    elif room_join_rect.collidepoint(mouse):table=OnlineTable(name,False,relay_address,relay=True,code=room_code)
+                    elif create_rect.collidepoint(mouse):table=RoomTable(name,True,relay_address)
+                    elif room_join_rect.collidepoint(mouse):table=RoomTable(name,False,relay_address,code=room_code)
                     elif host_rect.collidepoint(mouse):table=OnlineTable(name,True)
                     elif join_rect.collidepoint(mouse):table=OnlineTable(name,False,address.strip() or '127.0.0.1')
                     elif start_rect.collidepoint(mouse):table=StandaloneTable(name)
-                if event.type==pygame.KEYDOWN and event.key==pygame.K_RETURN:table=StandaloneTable(name)
-                if table is not None:pygame.key.stop_text_input()
+                if event.type==pygame.KEYDOWN and event.key==pygame.K_RETURN:
+                    if focus=='code' and room_code:table=RoomTable(name,False,relay_address,code=room_code)
+                    elif focus=='relay':table=RoomTable(name,True,relay_address)
+                    else:focus='relay'
+                if table is not None:
+                    connection_settings.save(name,relay_address);pygame.key.stop_text_input()
                 continue
-            online=isinstance(table,OnlineTable)
+            online=isinstance(table,(OnlineTable,RoomTable))
             if event.type==pygame.MOUSEBUTTONDOWN and event.button==1 and leave_rect.collidepoint(mouse):
                 if online:table.close()
                 table=None;pygame.key.start_text_input();continue
+            if isinstance(table,RoomTable):
+                room_view.event(event,mouse,table);continue
             if online and not table.playable:
                 if event.type==pygame.KEYDOWN and event.key==pygame.K_ESCAPE:
                     table.close();table=None;pygame.key.start_text_input()
@@ -86,7 +95,7 @@ def main():
                 if action=='options':ui.holdem_options_open=True
                 elif action=='return' or (action=='next_hand' and table.finished):
                     
-                    if isinstance(table,OnlineTable):table.close()
+                    if isinstance(table,(OnlineTable,RoomTable)):table.close()
                     table=None;pygame.key.start_text_input()
                 elif action.startswith('recap_'):handle_recap_action(g,action)
                 elif table.act(action):sound('card_move')
@@ -102,24 +111,25 @@ def main():
             for rect,label in ((start_rect,'Local Practice'),(host_rect,'Host Table'),(join_rect,'Join LAN'),(create_rect,'Create Room'),(room_join_rect,'Join Room')):
                 pygame.draw.rect(canvas,(54,107,76),rect,border_radius=10);image=font.render(label,True,(250,243,216));canvas.blit(image,image.get_rect(center=rect.center))
         else:
-            online=isinstance(table,OnlineTable)
+            online=isinstance(table,(OnlineTable,RoomTable))
             if online or not ui.holdem_options_open:
                 key=table.update(pygame.time.get_ticks())
                 if key:sound(key)
-            if not online or table.playable:
+            if isinstance(table,RoomTable):room_view.draw(table)
+            elif not online or table.playable:
                 ui.draw_texas_holdem(canvas,mouse,table.game,view.cards,view.back,view.background,view.title,view.button,view.portrait,font,font,font,table.name,view.felt)
             else:
                 canvas.fill((20,56,42));label=font.render(table.status,True,(245,233,201));canvas.blit(label,label.get_rect(center=(683,320)))
                 label=font.render('Share the room code and relay address with your friend.',True,(245,233,201));canvas.blit(label,label.get_rect(center=(683,385)))
             pygame.draw.rect(canvas,(65,96,77),leave_rect,border_radius=8);label=font.render('Leave table',True,(245,233,201));canvas.blit(label,label.get_rect(center=leave_rect.center))
-            if online and table.playable and table.game.hand_complete:
+            if isinstance(table,OnlineTable) and table.playable and table.game.hand_complete:
                 alive=sum(stack>0 for stack in [table.game.player_stack,*table.game.npc_stacks])
                 text='Table finished' if alive<2 else f'Ready ({table.game.ready_count}/2)' if table.game.you_ready else 'Ready for next hand'
                 pygame.draw.rect(canvas,(65,96,77),ready_rect,border_radius=8);image=pygame.font.Font(None,26).render(text,True,(245,233,201));canvas.blit(image,image.get_rect(center=ready_rect.center))
-            if online:
+            if isinstance(table,OnlineTable):
                 label=pygame.font.Font(None,22).render(table.status,True,(245,233,201));canvas.blit(label,(450,72))
         screen.fill((0,0,0));screen.blit(pygame.transform.smoothscale(canvas,(round(1366*scale),round(768*scale))),offset);pygame.display.flip();clock.tick(60)
-    if isinstance(table,OnlineTable):table.close()
+    if isinstance(table,(OnlineTable,RoomTable)):table.close()
     pygame.key.stop_text_input();pygame.quit()
 
 if __name__=='__main__':main()
